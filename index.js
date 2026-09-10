@@ -109,12 +109,25 @@ export function apply(ctx, config) {
       (up) => {
         res.writeHead(up.statusCode, up.headers);
         up.pipe(res);
+        // Once the upstream response is flowing we can no longer write a new
+        // status line; if it dies mid-stream, just tear the client down.
+        up.on("error", (e) => {
+          ctx.logger.warn(`zen-proxy: upstream stream error: ${e.message}`);
+          res.destroy(e);
+        });
       }
     );
     out.on("error", (e) => {
       ctx.logger.warn(`zen-proxy: upstream error: ${e.message}`);
-      res.writeHead(502);
-      res.end(String(e));
+      // The response may already be committed (e.g. the socket errored after
+      // the upstream headers arrived). Writing a status then throws
+      // ERR_HTTP_HEADERS_SENT, so only send a 502 if we still can.
+      if (res.headersSent) {
+        res.destroy(e);
+        return;
+      }
+      res.writeHead(502, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: { type: "upstream_error", message: e.message } }));
     });
     if (body !== null) out.end(body);
     else out.end();
