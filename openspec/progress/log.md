@@ -9,6 +9,8 @@
 - `dsh-zen-proxy` 从「HTTP 反向代理（监听 4097）」重写为**原生 llm-provider cordis 插件**，直接注册进宿主的模型选择器；provider 名为 `opencode-free`（可用免费模型）与 `opencode-free-region`（地区受限，单独分组显示为不可用）。
 - OpenSpec 变更 `add-opencode-free-provider` 已走完 propose → apply → verify → archive；三条能力已同步为 SSOT：`openspec/specs/zen-free-provider/spec.md`、`zen-free-availability/spec.md`、`zen-free-upstream-wire/spec.md`（`openspec validate --all --strict` 3/3 通过）。
 - 完成证据：`npm test` 152/152（44 suites）；`node --check` 全绿；产物（index.js、src/*.js、cordis.patch.yml）内除上游 base URL 外无写死绝对路径；无 TODO/占位符。
+- 已安装进 `C:\Users\Ye\.dsh\profiles\desktop`：**真实目录**拷贝（非 symlink/junction，不触发 `PROFILE_UPGRADE_REQUIRED`），`dependencies` 加 `"dsh-zen-proxy": "0.2.0"`，`dsh.profile.bundles` 追加 `dsh-zen-proxy`；19 个文件 SHA256 与仓库逐一一致；改动前留有 `package.json.bak-zenprox` / `pnpm-lock.yaml.bak-zenprox`。
+- 已推送 GitHub：commit `8062080`（62 files, +9377/−201）→ `origin/main`，并新增 `.gitattributes`（`* text=auto eol=lf`）；推送后新建克隆复核（HEAD、src 14 文件、无 node_modules、15 个文件 `node --check` 全过、哈希与安装副本一致）。
 
 ### 教训
 
@@ -39,8 +41,20 @@ README 承诺「运行中修改探测周期，下一轮起生效，无需重启�
 
 在 codemode 的 JS 模板字符串里写 PowerShell 的 `"${f} -> $LASTEXITCODE"`，`${}` 会被 JS **先**插值，报 `ReferenceError: f is not defined`。含 `$var` 的 PowerShell 片段应改用 JS 单引号字符串拼接。
 
+#### 6. 检查脚本自身出错时会「假装通过」
+
+复核行尾时写了 `Where-Object { $_.FullName -notmatch '\.git\' }`，末尾单反斜杠是**非法正则转义**，每个文件都在过滤阶段抛错被丢弃，`$crlf` 恒为 `0`，脚本却打印出「含 CRLF 的文件数 = 0（通过）」。同一轮里 `cmd /c rmdir` 那行因模板字符串里的反引号被提前截断，**从未执行**。
+
+- 规则：计数型检查必须同时打印**受检总数**（本次 `受检文件数 = 0` 立刻暴露了问题）；任何「通过」输出都要能回答「检查了几个对象」。
+- 权威替代：行尾不要自己扫，用 `git ls-files --eol`（`i/lf w/lf attr/text=auto eol=lf`）。
+
+#### 7. `node --test test/` 不是本仓的验收命令
+
+传**目录**给 Node 测试运行器时只会得到 1 个名为 `test` 的假测试并报 `fail 1`（`Command exited with code 1`），看起来像测试挂了。本仓的验收命令是 `package.json` 里的 `node --test test/*.test.js`（即 `npm test`，152/152）。**一律用 `npm test`**。
+
 ### 残留风险
 
-- **desktop profile 实际挂载未验证**（任务 5.4）：需用户把本包加入 profile 依赖并重启宿主后，确认模型选择器出现 `opencode-free` / `opencode-free-region`。
+- **desktop profile 实际挂载未验证**（任务 5.4）：包已装入 profile，尚需宿主重启后确认模型选择器出现 `opencode-free` / `opencode-free-region`，以及探测轮次是否按 10 分钟推进（状态文件 `$DSH_HOME/zen-proxy/availability.json`）。
+- **残留空目录** `D:\Document\Code\test\_tmp_verify_clone`：内容已删净但目录被某进程占用作 CWD，删不掉；不在仓库内、零字节，重启后可手工删除。
 - **地区车道与 responses 协议族在本机出口（CN）无法证真**，只能证伪（`*muse-spark*` 恒被地区闸门拦住）。
 - 宿主契约断言基于本地复刻的桩，与 `_recon` 抽取结果一致，但宿主升级后可能漂移。
