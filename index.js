@@ -1,122 +1,48 @@
-// dsh-zen-proxy — Cordis plugin: in-process OpenAI-compatible proxy that
-// injects OpenCode Zen official client headers on upstream requests.
-//
-// Why: the Zen gateway rate-limits free models for third-party clients by
-// validating the User-Agent and x-opencode-* headers. dsh's LLM adapters
-// forcibly send their own `user-agent` attribution header and cannot be
-// configured to send the official opencode one, so a plain adapter cannot
-// reach the free tier. This plugin runs a tiny local HTTP server (inside the
-// dsh process, started/stopped with the profile) that rewrites the identity
-// headers before forwarding to https://opencode.ai/zen/v1.
-//
-// Point the opencode provider baseURL in settings.yaml at the proxy:
-//   llm-pi-ai.providers.opencode.baseURL: http://127.0.0.1:4097/v1
-//
-// Configuration (cordis.patch.yml):
-//   - id: zen-proxy
-//     name: 'dsh-zen-proxy'
-//     config:
-//       host: 127.0.0.1
-//       port: 4097
+/**
+ * dsh-zen-proxy — 把 OpenCode Zen 的免费模型车道接成 dsh 的原生 llm-provider 插件。
+ *
+ * 插件以官方 OpenCode 客户端的网络身份向上游发请求（免费车道的闸门只认
+ * `user-agent: opencode/<>=1.18.0>` 与一组 `x-opencode-*` 头），每 10 分钟探测一次
+ * 可用性，并把目录只交给「最近一次判定为可用」的免费模型；地区受限的免费模型进入
+ * 独立路由 `opencode-free-region`。
+ *
+ * 这里只做薄入口：`name` / `inject` / `Config` / `apply`。接线在 `src/register.js`，
+ * 宿主无关的纯逻辑在 `src/` 的其余模块里。
+ *
+ * @module index.js
+ */
 
-import z from "@deepseek-ai/schemastery";
-import http from "node:http";
-import https from "node:https";
+import z from '@deepseek-ai/schemastery';
 
-export const name = "zen-proxy";
+import { register } from './src/register.js';
+import { DEFAULT_CLIENT_VERSION } from './src/identity.js';
+import { DEFAULT_PROBE_INTERVAL_MINUTES } from './src/schedule.js';
 
-export const Config = z.object({
-  host: z.string().default("127.0.0.1"),
-  port: z.number().default(4097),
-  upstreamHost: z.string().default("opencode.ai"),
-  upstreamBasePath: z.string().default("/zen/v1"),
-  userAgent: z
-    .string()
-    .default("opencode/1.15.5 ai-sdk/provider-utils/4.0.23 runtime/bun/1.3.14"),
-  clientHeader: z.string().default("cli"),
-  projectHeader: z.string().default("global"),
-});
-
-export const inject = [];
-
-/** Deterministic per-request random id: `ses_` / `msg_` + 10 chars. */
-const rnd = (p) => `${p}${Math.random().toString(36).slice(2, 12)}`;
+/** 插件名。同时是 cordis.patch.yml 里 loader 条目的 `id`。 */
+export const name = 'zen-proxy';
 
 /**
- * @param {import("@deepseek-ai/cordis").Context} ctx
- * @param {z.infer<typeof Config>} config
+ * 只硬依赖 `llm`：没有它插件无事可做；其余宿主facility 一律用可选读取，缺失时
+ * 相应功能降级而不是让插件保持 PENDING。
+ */
+export const inject = ['llm'];
+
+/** 配置面。 */
+export const Config = z.object({
+  /** 探测周期（分钟），默认 10。 */
+  probeIntervalMinutes: z.number().default(DEFAULT_PROBE_INTERVAL_MINUTES),
+  /**
+   * 伪装用的 OpenCode 版本。只在下限之上生效：低于闸门门槛 `1.18.0` 的值不会被使用，
+   * 插件会记录诊断并回退到门槛值（闸门对更旧的版本返回 `426 UpgradeRequired`）。
+   */
+  opencodeVersion: z.string().default(DEFAULT_CLIENT_VERSION),
+});
+
+/**
+ * 挂载插件。
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {{probeIntervalMinutes: number, opencodeVersion: string}} config
  */
 export function apply(ctx, config) {
-  const server = http.createServer((req, res) => {
-    const { method, url } = req;
-
-    // GET /v1/models — model-list discovery passthrough.
-    if (method === "GET" && url === "/v1/models") {
-      forward(req, res, { method: "GET", path: `${config.upstreamBasePath}/models`, body: null });
-      return;
-    }
-
-    if (method !== "POST" || url !== "/v1/chat/completions") {
-      res.writeHead(404, { "content-type": "application/json" });
-      res.end(JSON.stringify({ error: { type: "not_found", message: `zen-proxy: unsupported ${method} ${url}` } }));
-      return;
-    }
-
-    let body = "";
-    req.on("data", (c) => (body += c));
-    req.on("end", () => {
-      forward(req, res, { method: "POST", path: `${config.upstreamBasePath}/chat/completions`, body });
-    });
-  });
-
-  server.on("error", (error) => {
-    ctx.logger.warn(`zen-proxy: server error: ${error.message}`);
-  });
-
-  ctx.effect(() => {
-    server.listen(config.port, config.host, () => {
-      ctx.logger.info(
-        `zen-proxy: listening on http://${config.host}:${config.port}${config.upstreamBasePath} (upstream https://${config.upstreamHost})`
-      );
-    });
-    return () => {
-      server.close();
-    };
-  }, "zen-proxy.server");
-
-  /** Forward one request to the Zen upstream with official headers injected. */
-  function forward(req, res, { method, path, body }) {
-    const headers = {
-      "content-type": "application/json",
-      // Pass through the caller's Authorization if present; nothing else.
-      ...(req.headers.authorization ? { authorization: req.headers.authorization } : {}),
-      "user-agent": config.userAgent,
-      "x-opencode-client": config.clientHeader,
-      "x-opencode-project": config.projectHeader,
-      "x-opencode-session": rnd("ses_"),
-      "x-opencode-request": rnd("msg_"),
-    };
-    if (body !== null) headers["content-length"] = Buffer.byteLength(body);
-
-    const out = https.request(
-      {
-        host: config.upstreamHost,
-        port: 443,
-        method,
-        path,
-        headers,
-      },
-      (up) => {
-        res.writeHead(up.statusCode, up.headers);
-        up.pipe(res);
-      }
-    );
-    out.on("error", (e) => {
-      ctx.logger.warn(`zen-proxy: upstream error: ${e.message}`);
-      res.writeHead(502);
-      res.end(String(e));
-    });
-    if (body !== null) out.end(body);
-    else out.end();
-  }
+  register(ctx, config, { pluginName: name });
 }

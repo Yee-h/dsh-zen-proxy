@@ -1,0 +1,8 @@
+# dsh-zen-proxy bundle patch。
+#
+# 一行 insert 即把插件的宿主半身挂进 profile；本插件没有浏览器半身，
+# 因此 package.json 里**不**声明 dsh.client。
+- insert:
+    - id: zen-proxy
+      name: 'dsh-zen-proxy'
+      config: {}
