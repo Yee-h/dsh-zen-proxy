@@ -55,9 +55,9 @@ README 承诺「运行中修改探测周期，下一轮起生效，无需重启�
 ### 残留风险
 
 - **desktop profile 实际挂载未验证**（任务 5.4）：包已装入 profile，尚需宿主重启后确认模型选择器出现 `opencode-free` / `opencode-free-region`，以及探测轮次是否按 10 分钟推进（状态文件 `$DSH_HOME/zen-proxy/availability.json`）。
-- **残留空目录** `D:\Document\Code\test\_tmp_verify_clone`：内容已删净但目录被某进程占用作 CWD，删不掉；不在仓库内、零字节，重启后可手工删除。
+- **残留空目录** `D:\Document\Code\test\_tmp_verify_clone`：内容已删净但目录被某进程占用作 CWD，删不掉；不在仓库内、零字节，重启后可手工删除。（**已解决**：0.2.2 那轮连同 `_probe/`、`_recon/` 一并删除。）
 - **地区车道与 responses 协议族在本机出口（CN）无法证真**，只能证伪（`*muse-spark*` 恒被地区闸门拦住）。
-- 宿主契约断言基于本地复刻的桩，与 `_recon` 抽取结果一致，但宿主升级后可能漂移。
+- 宿主契约断言基于本地复刻的桩，与 `_recon` 抽取结果一致，但宿主升级后可能漂移。（**注**：`_recon/` 已于 0.2.2 删除；该断言现在只由仓库内的 `scripts/` 脚本与桩复现。）
 
 ## 2026-10-07 — dsh-zen-proxy：思考强度可调（变更 `add-reasoning-effort-control`）
 
@@ -141,7 +141,7 @@ C1 的形态是：`design.md` 已经诚实记下了「参考实现测得约 82%�
 - **C3（最严重）**：`evidence.md` (2) 的表格把 `limit.context` 列写错 **8/11** 条
   （`exo-free` 记 131072、实时值 1048576；`mimo` 记 262144、实时值 200000），却在下方断言
   「与 `CONTEXT_WINDOW_SOURCE` 逐条相同」。写了一个三方对照脚本
-  （`_probe/verify-sources.mjs`：models.dev 实时值 / `src/catalog.js` / 文档表格）复现：
+  （`scripts/verify-sources.mjs`：models.dev 实时值 / `src/catalog.js` / 文档表格）复现：
   `live context 不符 = 0`、`evidence.md context 列不符 = 8`。**错误形态**：同一张表里
   「对的那一列」（`output` 11/11 正确）掩盖了「错的那一列」；而同源产出的两列本就
   不是互相独立的验证。已按实时值改正全表并补 `reasoning` 列与受检总数。
@@ -208,8 +208,8 @@ C4 是修 C1 时引入的：C1 只要求把「实测约八成」改成「参考�
 
 ### 本轮交付
 
-- `_probe/verify-sources.mjs`（三方溯源对照，打印受检总数）、`_probe/verify-import-regex.mjs`
-  （证明新正则能抓到动态宿主 import、旧正则不能）、`_probe/e2e-tiers.mjs`（把宿主两条校验规则
+- `scripts/verify-sources.mjs`（三方溯源对照，打印受检总数）、`scripts/verify-import-regex.mjs`
+  （证明新正则能抓到动态宿主 import、旧正则不能）、`scripts/e2e-tiers.mjs`（把宿主两条校验规则
   抄成桩，串起「档位 → 菜单 → 校验 → 请求体预算」并实际执行，六个用例失败项 0）。
 - `npm test` **176/176**（49 suites）；`openspec validate --all --strict` 4/4；`node --check` 全绿。
 
@@ -225,7 +225,7 @@ C4 是修 C1 时引入的：C1 只要求把「实测约八成」改成「参考�
 第三轮我修 C3 时做了三件事，每一步单独看都合理，叠加起来造出了一段**从未存在过的证据**：
 
 1. 把 evidence 表格格式从 `<id> context <n> output <n>` 改成 `<id> <ctx> <out> <reasoning>`；
-2. **忘了**同步更新取证脚本 `_probe/verify-sources.mjs` 的解析正则（它仍只认旧格式）；
+2. **忘了**同步更新取证脚本 `scripts/verify-sources.mjs` 的解析正则（它仍只认旧格式）；
 3. 于是在 `evidence.md` 里写下「三方对照的可证伪结论」，内容是**我期望的**「不符 = 0」。
 
 实际后果：脚本解析出 **0 行** ⇒ 每个 id 都判「不符」⇒ 真实输出是 **11/11**，与文档相反。
@@ -236,7 +236,7 @@ C4 是修 C1 时引入的：C1 只要求把「实测约八成」改成「参考�
 是对的**（表格值已按实时值改正，独立复算三方一致）；坏掉的是**证据链**。
 
 - 规则（**本仓最高优先级**）：**文档里的「实测输出」只能粘贴，不能手写**。写完必须用机器
-  逐行比对文档与脚本真实 stdout（本轮补了 `_probe/verify-evidence-matches-script.mjs`，
+  逐行比对文档与脚本真实 stdout（本轮补了 `scripts/verify-evidence-matches-script.mjs`，
   它把 evidence.md 的代码块与脚本 stdout 逐行 diff，当前 `不一致数 = 0`）。
 - 规则：取证脚本的**解析器与文档格式是一对契约**。改文档表格格式时，必须同时改脚本，
   并让脚本在**解析 0 行时抛错退出**（本轮已加），否则失效脚本会恒打印一个看似结论的数字。
@@ -253,7 +253,7 @@ C4 是修 C1 时引入的：C1 只要求把「实测约八成」改成「参考�
   `require('@x')`。已补全为四条正则并加一条**对抗用例**（五种写法逐一断言命中）。
   顺带发现去重后受检数为 **39**（旧单正则不去重是 40，差额来自 `probe.js` 一处重复说明符），
   阈值据此校正——**不为了让测试通过而随意调数字，先查清 39 与 40 的差从哪来**
-  （`_probe/count-imports.mjs` 逐文件列出 old/raw/uniq/dupes）。
+  （`scripts/count-imports.mjs` 逐文件列出 old/raw/uniq/dupes）。
 
 ### 教训 15：修完「格式」要回查所有**依赖该格式**的消费者
 
@@ -269,7 +269,7 @@ N1 的根因不是粗心，而是**改了一处的格式却没枚举它的消费
 ### 本轮（第四轮）交付
 
 - `npm test` **177/177**（49 suites，新增 1 条对抗用例）；`openspec validate --all --strict` 4/4；
-  `node _probe/verify-sources.mjs` → `exit=0`；`node _probe/verify-evidence-matches-script.mjs`
+  `node scripts/verify-sources.mjs` → `exit=0`；`node scripts/verify-evidence-matches-script.mjs`
   → `不一致数 = 0`。
 
 ### 残留风险（本轮新增）
@@ -388,9 +388,70 @@ D2 与 D3 都是**验证工具/测试自身的缺陷**：前者是比对范围�
 ### 本轮（第五轮）交付
 
 - `npm test` **177/177**（49 suites）；`openspec validate --all --strict` **3/3**（归档后规格数 3）；
-  `_probe/verify-evidence-matches-script.mjs` → `exit=0`（三项检查）；
-  `_probe/mutation-test-import-check.mjs` → 三种变异均被抓住。
+  `scripts/verify-evidence-matches-script.mjs` → `exit=0`（三项检查）；
+  `scripts/mutation-test-import-check.mjs` → 三种变异均被抓住。
 - 归档结果：`openspec/changes/archive/2026-10-08-add-reasoning-effort-control/`；
   `openspec/specs/zen-free-provider/spec.md` 新增「思考强度菜单」、
   `zen-free-upstream-wire/spec.md` 新增「思考预算作为唯一可执行的控制」。
+
+## 2026-10-08（续）— 仓库卫生与发布（0.2.2）：把取证脚本收进仓库
+
+### 背景
+
+用户提出三件事：① `.gitignore` 不该让 `.pi/` 之类的工具目录上传（并要把**已上传的从云端删除**）；
+② 清掉仓库外的 `_probe/`、`_recon/`、`_tmp_verify_clone/` 等临时目录；
+③ 完成后推送云端，并**删掉本地安装的插件、改用云端地址重装**。
+
+### 关键判断：`_probe/` 不能直接删
+
+`_probe/` 里有 11 个脚本被 `openspec/` 的变更文档引用为「可复现命令」（`evidence.md` 8 处、
+`tasks.md` 10 处、`log.md` 9 处，`test/register.test.js` 1 处注释）。直接删掉会让这些文档里的
+命令全部指向不存在的文件——那正是教训 1/6 同族的缺陷（把不可复现的东西当证据）。
+因此按用户选择：**把被引用的脚本收进仓库 `scripts/`，并同步改正文档里的路径**。
+
+### 交付
+
+- 新增 `scripts/`（16 个脚本）。被文档引用的 11 个 + 5 个配套验证脚本；
+  未入库的是纯一次性探针（`asar.mjs`、`bisect.mjs`、`narrow.mjs`、`ref-probe.mjs`、
+  `idshape.mjs`、`models-vs-fingerprint.mjs` 等，它们硬编码了本机 profile / app.asar 路径）。
+- **全部脚本改为位置无关**：`import.meta.dirname` 推导仓库根，不再出现 `D:/Document/...`
+  或 `../dsh-zen-proxy/src/...`。改完 16 个脚本 `node --check` 全绿，且逐个实跑 `exit=0`。
+- `verify-referenced-scripts.mjs` 改为扫 `scripts/*.mjs` 并**加了 0 引用硬守卫**（解析 0 条即抛错，
+  避免「正则与文档写法脱钩 → 打印 0 缺失 → 假装通过」，教训 15/18）。
+- `verify-version.mjs` 重写：不再写死「0.2.0 应为 0 次」这种会随版本过期的期望，
+  改为三处版本一致 + 三处包名一致 + `package.json` 里自身版本只出现 1 次。
+- `verify-archive-merge.mjs` 的 delta 路径改指 `archive/2026-10-08-…/`（该变更已归档，
+  原路径已失效），并按归档后语义报告「ADDED 已并入主规格 = true」。
+- `README.md` 新增「开发」节的 `scripts/` 说明与命令清单；`evidence.md` 开头
+  「在仓库外的 `_probe/` 下，**不落在仓库里**」改为如实说明已收进仓库。
+- `.gitignore` 从 1 行扩到分组规则：`.pi/`、`.claude/`、`.cursor/`、`.opencode/`、`.codex/`、
+  `.vscode/`、`.idea/` 等工具目录，`_probe/`、`_recon/`、`_tmp*/`、`_scratch/` 开发期临时目录。
+- `git rm -r --cached .pi` 移除已跟踪的 12 个文件（`.pi/prompts/opsx-*.md` 6 个 +
+  `.pi/skills/openspec-*/SKILL.md` 6 个）；工作区文件保留在本地。
+- 版本 `0.2.1` → **`0.2.2`**（`package.json`、`package-lock.json` 顶层、`packages[""]` 三处同步）。
+- 删除仓库外的 `_probe/`、`_recon/`、`_tmp_verify_clone/`。
+
+### 教训 19：删除「临时目录」前，先查它有没有被**版本化的文档**引用
+
+`_probe/` 名字看起来是一次性的（下划线前缀、仓库外），但它的内容已经被 `openspec/` 的
+归档证据**引用成了证据链的一部分**。清理前先 `git grep` 一遍引用关系，才知道哪些是垃圾、
+哪些是必须一起搬走的证据。若当时直接 `rm -rf`，11 条「可复现命令」会集体失效，
+而且是那种**不会报错**的失效（文档照旧、脚本没了）。
+
+### 教训 20：脚本入库时，硬编码路径必须同时消灭
+
+这些脚本原本都假定「仓库在 `D:/Document/Code/test/dsh-zen-proxy`，脚本在它隔壁的 `_probe/`」。
+搬进 `scripts/` 后如果只改文件位置不改路径，脚本会**静默跑错对象**或直接崩。
+改法是统一用 `import.meta.dirname` 反推，这样在任意 checkout 路径、任意工作目录下都成立。
+验收方式不是「看一眼」，而是 16 个脚本逐个实跑并检查 `exit=0`。
+
+### 本轮交付（验收）
+
+- `npm test` **177/177**（49 suites）；`openspec validate --all --strict` **3/3**。
+- `scripts/` 16 个脚本 `node --check` 全绿；9 个非网络脚本实跑 `exit=0`；
+  `verify-sources.mjs`（联网）→ `受检模型数 checked=11`、五处不符均 0、`exit=0`；
+  `verify-evidence-matches-script.mjs` → 三项检查全过、`exit=0`；
+  `verify-referenced-scripts.mjs` → 引用 15 个、缺失 0、`exit=0`。
+- `verify-version.mjs` → 三处版本/包名一致、`exit=0`。
+
 

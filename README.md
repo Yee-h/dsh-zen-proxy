@@ -276,6 +276,27 @@ npm install          # 只装 devDependency：@deepseek-ai/schemastery
 npm test             # node:test，覆盖全部纯逻辑模块与适配器行为
 ```
 
+`scripts/` 保存**开发期取证与验证脚本**（不参与运行时，也不在 npm `files` 白名单里，因此
+不会随包发布）。它们被 `openspec/` 的变更文档引用为「可复现命令」，因此随仓库一起版本化；
+每个脚本都用 `import.meta.dirname` 推导路径，在任意 checkout 位置都能直接运行：
+
+```powershell
+node scripts/verify-sources.mjs                    # models.dev 实时值 / 常量表 / 文档表格 三方对照
+node scripts/verify-evidence-matches-script.mjs    # 文档粘贴块与脚本真实 stdout 逐行比对
+node scripts/verify-all-models-ladder.mjs          # 11 个模型逐档核对菜单名称与预算一致
+node scripts/verify-catalog-resolve-consistency.mjs # 目录里每个 id 都能解析出合法档位菜单
+node scripts/verify-foreign-effort.mjs             # 跨 provider 档位 id 被宿主拒绝、未指定则落默认档
+node scripts/e2e-tiers.mjs                         # 档位 → 宿主校验 → 请求体预算 端到端
+node scripts/verify-import-regex.mjs               # 依赖检查正则能抓到动态宿主 import
+node scripts/count-imports.mjs                     # 说明符计数口径（旧单正则 40 / 新四正则去重 39）
+node scripts/mutation-test-import-check.mjs        # 变异测试：证明对抗用例真能抓住正则退化
+node scripts/verify-archive-merge.mjs              # 归档后 MODIFIED 头与主规格逐字匹配
+node scripts/verify-version.mjs                    # package.json / lock 三处版本一致
+```
+
+`scripts/effort.mjs`、`scripts/tiers.mjs`、`scripts/limits.mjs`、`scripts/final-consistency-scan.mjs`
+是直连上游/扫描仓库的实测脚本，其中前两个会真实调用 `https://opencode.ai`。
+
 模块边界：
 
 | 文件 | 职责 |

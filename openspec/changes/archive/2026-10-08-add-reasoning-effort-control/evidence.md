@@ -1,8 +1,8 @@
 # 证据
 
 本文件记录本变更「思考强度可调」的开发期**实测**结果。所有命令都是本机直连
-`https://opencode.ai` 的一次性脚本（在仓库外的 `_probe/` 下，**不落在仓库里**），
-日期 2026-10-07。
+`https://opencode.ai` 的一次性脚本（开发期原在仓库外的 `_probe/` 下；0.2.2 起已收进
+仓库的 `scripts/`，本文档中的路径均已同步为 `scripts/…`），日期 2026-10-07。
 
 ---
 
@@ -11,7 +11,7 @@
 ### 实验设置
 
 同一道题、同一套四连工具（`bash` / `glob` / `grep` / `read`，免费车道闸门要求），
-只改请求体里的强度字段；每个变体采样 1-2 次，共 10 次调用。命令（摘录，`_probe/effort.mjs`）：
+只改请求体里的强度字段；每个变体采样 1-2 次，共 10 次调用。命令（摘录，`scripts/effort.mjs`）：
 
 ```js
 const variants = {
@@ -80,7 +80,7 @@ nemotron-3.5-lightning-free  D max=512        200 finish=length   思考token=  
 
 ## (2) 输出上限的溯源：models.dev 的 `limit.output`
 
-取值命令（`_probe/verify-sources.mjs`，把「models.dev 实时值 / 仓库常量表 / 本文档表格」
+取值命令（`scripts/verify-sources.mjs`，把「models.dev 实时值 / 仓库常量表 / 本文档表格」
 三方逐行对照，并打印受检总数）：
 
 ```js
@@ -111,7 +111,7 @@ nemotron-3-ultra-free                    1000000        128000  true
 space-bunny-free                         1048576        524288  true
 ```
 
-三方对照的**脚本实际输出的汇总段**（`node _probe/verify-sources.mjs`；下方是 stdout 的**末尾 13 行**，
+三方对照的**脚本实际输出的汇总段**（`node scripts/verify-sources.mjs`；下方是 stdout 的**末尾 13 行**，
 逐字未改。为节省篇幅省略了 stdout 开头的 13 行：1 行 `GET https://models.dev/api.json -> 200`、
 11 行逐模型明细（每行含 `live.ctx` / `src.ctx` / `ev.ctx` / `reasoning` 与各自的 `ok`/`BAD` 标记）
 与 1 行 `---` 分隔符。完整 stdout 共 26 行，可用上述命令原样复现）：
@@ -171,7 +171,7 @@ jev-1.13-free 是否缺席 models.dev = true
 #### 第 2 条勘误：修表之后，取证脚本没跟着改，于是「证据」变成了手写的
 
 上面那次修正把表格格式从 `<id> context <n> output <n>` 改成 `<id> <ctx> <out> <reasoning>`，
-但**没有同步更新取证脚本** `_probe/verify-sources.mjs` 的解析正则（它仍只认旧格式）。后果是：
+但**没有同步更新取证脚本** `scripts/verify-sources.mjs` 的解析正则（它仍只认旧格式）。后果是：
 
 - 脚本解析出 **0 行** ⇒ 每个 id 的 `ev` 都是 `undefined` ⇒ 恒打印「不符 = 11」；
 - 而当时贴进本节「三方对照的可证伪结论」里的输出，被写成了**「不符 = 0」**——那是**手写的
@@ -190,7 +190,7 @@ jev-1.13-free 是否缺席 models.dev = true
 3. 脚本末尾打印「不符总数」并以其设置退出码；
 4. 本节改为**逐字粘贴脚本真实输出**（含 `解析到的行数 = 11` 与 `不符总数 = 0`）。
 
-**可复现命令**：`node _probe/verify-sources.mjs`（`exit=0` 表示三方全部一致）。
+**可复现命令**：`node scripts/verify-sources.mjs`（`exit=0` 表示三方全部一致）。
 
 
 ### (2b) 参考实现的 82% 与「能否关闭思考」
@@ -282,7 +282,7 @@ adapterStream       : resolvedOptions = { ...options, ...resolvedConfig }   ← 
 因此**未选档位时也会带上预算**（宿主把 `defaultEffort` 物化进 `resolvedConfig`），这与
 `test/adapter.test.js` 的「未指定档位时按默认（均衡）档发出预算 → 16384」断言一致。
 
-### 端到端复现（本轮补验，`_probe/e2e-tiers.mjs`）
+### 端到端复现（本轮补验，`scripts/e2e-tiers.mjs`）
 
 上面几段是**读代码**得出的链路。本轮进一步把宿主的两条校验规则（`normalizeModelInfo` /
 `resolveCallWithInfo`）逐条抄成一个桩，串起「档位 → 菜单 → 校验 → 请求体预算」并实际执行：
@@ -333,7 +333,7 @@ openspec validate --all --strict  → 4 passed / 0 failed（change + 3 specs）
 同一模型（`mimo-v2.6-flash-free`）、同一组身份头、同一道**要求长答案**的 prompt（「至少 3000 字，
 8 个小节，不要用要点列表代替正文」），唯一变量是请求体的 `max_tokens`。探针直接发送三档各自
 算出的预算值（不是经由宿主传递档位）；档位与预算的对应关系由 `test/effort.test.js` 锁死，见 (4)。
-命令（摘录，`_probe/tiers.mjs`）：
+命令（摘录，`scripts/tiers.mjs`）：
 
 ```js
 const VARIANTS = [
