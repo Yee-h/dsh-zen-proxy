@@ -458,8 +458,13 @@ D2 与 D3 都是**验证工具/测试自身的缺陷**：前者是比对范围�
 
 提交 `bbaf051` 推到 `origin/main`（`14298f0..bbaf051`），远端树 76 个路径、`.pi/` 0 个、
 `scripts/` 16 个、`package.json` 版本 `0.2.2`。**注意**：`.pi/` 只是从 tip 移除，
-`8062080` 的历史里仍在（`git log --all -- .pi` 命中 `bbaf051` 与 `8062080` 两个提交）；
-要让云端彻底没有这些 blob，必须改写历史并强推，本次未做。
+`8062080` 的历史里仍在（`git log --all -- .pi` 命中 `bbaf051` 与 `8062080` 两个提交，
+12 个 blob 共 180.8 KB，`git merge-base --is-ancestor 8062080 origin/main` 仍成立）。
+**这是经过确认的取舍**：用户明确选择「保持现状：仅从 tip 移除」，不做历史改写——
+彻底抹掉需要 `filter-repo`/`filter-branch` 重写全部提交并强推，会使所有 commit SHA 改变、
+2 个 fork 分叉失联，属不可逆操作，收益（少 181 KB 且本身是 MIT 许可的 OpenSpec 官方模板）
+不足以抵偿。副作用是：GitHub 网页与全新克隆的文件树里已看不到 `.pi/`，但
+`git log -- .pi` 仍能找回内容。若日后要彻底清除，再单独执行改写并强推。
 
 把 profile 的安装源从本地 checkout 换成云端：
 
