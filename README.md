@@ -48,7 +48,12 @@ dsh plugin --profile desktop add git+https://github.com/Yee-h/dsh-zen-proxy.git
 ```
 
 `dsh plugin` 只把参数**透传**给 profile 的包管理器（本机为 pnpm），因此它**不会**替你写
-`dsh.profile.bundles`——装完还要手工在 `$DSH_HOME/profiles/desktop/package.json` 里补上：
+`dsh.profile.bundles`（本机实测：手工移除该条目后重跑 `dsh plugin add`，条目未被加回）。
+装完有两种方式补上它：
+
+- **推荐**：让运行中的宿主自己 reconcile——它检测到 `dependencies` 多了一个带 bundle patch 的包时，
+  会把它追加进 `dsh.profile.bundles`（本机实测该行为确实发生）。装完重启宿主即可。
+- 或手工在 `$DSH_HOME/profiles/desktop/package.json` 里补上：
 
 ```jsonc
 {
