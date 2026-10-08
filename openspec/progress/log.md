@@ -454,4 +454,28 @@ D2 与 D3 都是**验证工具/测试自身的缺陷**：前者是比对范围�
   `verify-referenced-scripts.mjs` → 引用 15 个、缺失 0、`exit=0`。
 - `verify-version.mjs` → 三处版本/包名一致、`exit=0`。
 
+### 发布与安装源切换（0.2.2）
+
+提交 `bbaf051` 推到 `origin/main`（`14298f0..bbaf051`），远端树 76 个路径、`.pi/` 0 个、
+`scripts/` 16 个、`package.json` 版本 `0.2.2`。**注意**：`.pi/` 只是从 tip 移除，
+`8062080` 的历史里仍在（`git log --all -- .pi` 命中 `bbaf051` 与 `8062080` 两个提交）；
+要让云端彻底没有这些 blob，必须改写历史并强推，本次未做。
+
+把 profile 的安装源从本地 checkout 换成云端：
+
+```powershell
+dsh plugin --profile desktop remove dsh-zen-proxy
+dsh plugin --profile desktop add 'git+https://github.com/Yee-h/dsh-zen-proxy.git'
+```
+
+- `remove` 后 `dependencies` 与 `node_modules/dsh-zen-proxy` 都消失，`.modules.yaml` 里 0 条引用；
+  **`dsh.profile.bundles` 里的 `dsh-zen-proxy` 也一并被删掉**（此前观察到 bundle 条目由宿主
+  reconcile 写入，但 `remove` 确实会连带清除它）。
+- `add` 用 50.2s 从 GitHub 取包，`pnpm-lock.yaml` 解析到 `commit: bbaf0513…`，与推送的 tip 一致。
+- 安装副本 version `0.2.2`、非 symlink（真实目录），20 个运行时文件与仓库 SHA256 **逐字节一致**；
+  `scripts/` 与 `.pi/` 都不在安装副本里（前者不在 npm `files` 白名单，后者已出库）。
+
+**教训 21：`dsh` 不在 PATH 上，CLI 的真实位置是 `D:\Software\DSH\resources\runtime\cli\bin\dsh.cmd`。**
+本轮 `dsh plugin …` 一度报「术语 'dsh' 不会被识别」，从 `runtime/cli/bin` 找到 shim 后才能执行；
+该 shim 会把 `plugin` 子命令**原样透传**给 pnpm（`--help` 打印的就是 pnpm 11.7.0 的帮助）。
 
