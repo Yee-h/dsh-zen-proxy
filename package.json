@@ -1,6 +1,6 @@
 {
   "name": "dsh-zen-proxy",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "type": "module",
   "description": "dsh plugin: native llm-provider 插件，以官方 OpenCode 客户端身份接入 OpenCode Zen 免费模型车道，每 10 分钟探测可用性并只公布判定为可用的免费模型",
   "main": "./index.js",

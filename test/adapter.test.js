@@ -14,6 +14,9 @@ import {
 import { MODEL_STATE, emptyState } from '../src/state.js';
 import { chatFinishFrame, chatFrame, collect, fakeFetch, sseResponse } from './fake-upstream.js';
 
+/** 网关接受但不执行的强度字段（实测见 `evidence.md` (1)）：适配器一律不在请求体里发送。 */
+const EFFORT_FIELDS = ['reasoning_effort', 'thinking', 'enable_thinking', 'thinking_budget'];
+
 /**
  * 宿主 `LlmRuntime.normalizeModelInfo` 接受的字段与取值规则（按权威契约逐条抄录成断言）。
  * 这里不 import 宿主包（插件仓库内不可解析），而是把关卡条件写成本地校验器，
@@ -169,6 +172,34 @@ describe('宿主校验规则', () => {
   });
 });
 
+describe('思考强度菜单', () => {
+  it('精确模型信息声明三档，默认档在菜单内', async () => {
+    const adapter = createAdapter({ state: mixedState });
+    const resolved = await adapter.resolveModel(ROUTE_MAIN, 'fledge-alpha-free');
+    assert.deepEqual(resolved.reasoning.efforts.map((effort) => effort.id), ['light', 'balanced', 'deep']);
+    assert.equal(resolved.reasoning.defaultEffort, 'balanced');
+    for (const effort of resolved.reasoning.efforts) {
+      assert.ok(effort.name.includes('K'), '档位名称要能看出预算');
+    }
+  });
+
+  it('无溯源输出上限的模型也给出菜单（容量回退）', async () => {
+    const adapter = createAdapter({ state: mixedState });
+    const resolved = await adapter.resolveModel(ROUTE_MAIN, 'jev-1.13-free');
+    assert.deepEqual(resolved.reasoning.efforts.map((effort) => effort.id), ['light', 'balanced', 'deep']);
+    assert.equal(resolved.context, undefined);
+  });
+
+  it('目录条目不携带 reasoning：宿主在该路径只保留四个字段', async () => {
+    const adapter = createAdapter({ state: mixedState });
+    for (const provider of ROUTES) {
+      for (const model of await adapter.listModels(provider)) {
+        assert.deepEqual(Object.keys(model).sort(), ['id', 'inputModalities', 'name', 'provider']);
+      }
+    }
+  });
+});
+
 describe('resolveModel', () => {
   it('id 严格等于请求的模型，且字段集合不越出宿主接受的集合', async () => {
     const adapter = createAdapter({ state: mixedState });
@@ -177,11 +208,11 @@ describe('resolveModel', () => {
     assert.equal(resolved.id, 'fledge-alpha-free');
     assert.equal(typeof resolved.name, 'string');
     assert.ok(resolved.name.length > 0);
-    assert.deepEqual(Object.keys(resolved).sort(), ['context', 'id', 'inputModalities', 'name', 'provider']);
+    assert.deepEqual(Object.keys(resolved).sort(), ['context', 'id', 'inputModalities', 'name', 'provider', 'reasoning']);
     assert.deepEqual(resolved.inputModalities, ['text']);
     assert.equal(resolved.systemPromptUpdate, undefined);
     assert.equal(resolved.toolUpdate, undefined);
-    assert.equal(resolved.reasoning, undefined);
+    assert.deepEqual(resolved.reasoning.efforts.map((effort) => effort.id), ['light', 'balanced', 'deep']);
   });
 
   it('有可溯源来源的模型给出该 contextWindow', async () => {
@@ -244,18 +275,74 @@ describe('prepareCall / stream', () => {
     assert.equal(body.model, 'fledge-alpha-free');
     assert.deepEqual(body.messages, [{ role: 'user', content: '你好' }]);
     assert.deepEqual(body.tools.map((tool) => tool.function.name).sort(), ['bash', 'glob', 'grep', 'read']);
-    assert.equal('max_tokens' in body, false, '调用方未指定输出上限时不得发送 max_tokens');
+    assert.equal(body.max_tokens, 16384, '未指定档位时按默认（均衡）档发出预算');
+    for (const field of EFFORT_FIELDS) assert.equal(field in body, false, `不应发送 ${field}`);
     const headers = calls[0].init.headers;
     assert.match(headers['user-agent'], /^opencode\/1\.18\./);
     assert.equal(headers.authorization, 'Bearer public');
   });
 
-  it('调用方指定输出上限时才发送 max_tokens', async () => {
+  it('调用方指定的上限收窄档位预算', async () => {
     const { fetch, calls } = fakeFetch(() => sseResponse([chatFrame({ content: 'hi' }), chatFinishFrame('stop')]));
     const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
     const prepared = await adapter.prepareCall(ROUTE_MAIN, 'fledge-alpha-free');
     await collect(prepared.stream({ ...options, maxTokens: 2048 }));
     assert.equal(JSON.parse(calls[0].init.body).max_tokens, 2048);
+  });
+
+  it('调用方指定的上限不把档位预算抬高', async () => {
+    const { fetch, calls } = fakeFetch(() => sseResponse([chatFrame({ content: 'hi' }), chatFinishFrame('stop')]));
+    const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
+    const prepared = await adapter.prepareCall(ROUTE_MAIN, 'fledge-alpha-free');
+    await collect(prepared.stream({ ...options, maxTokens: 4000000 }));
+    assert.equal(JSON.parse(calls[0].init.body).max_tokens, 16384, '档位预算不被调用方的更大上限抬高');
+  });
+
+  it('非法调用方上限不把请求体预算压到 0', async () => {
+    for (const bad of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const { fetch, calls } = fakeFetch(() => sseResponse([chatFrame({ content: 'hi' }), chatFinishFrame('stop')]));
+      const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
+      const prepared = await adapter.prepareCall(ROUTE_MAIN, 'fledge-alpha-free');
+      await collect(prepared.stream({ ...options, maxTokens: bad }));
+      assert.equal(JSON.parse(calls[0].init.body).max_tokens, 16384, String(bad));
+    }
+  });
+
+  it('无溯源输出上限的模型在 deep 档发出回退容量 32768', async () => {
+    const { fetch, calls } = fakeFetch(() => sseResponse([chatFrame({ content: 'hi' }), chatFinishFrame('stop')]));
+    const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
+    const prepared = await adapter.prepareCall(ROUTE_MAIN, 'jev-1.13-free');
+    await collect(prepared.stream({ ...options, model: 'jev-1.13-free', reasoningEffort: 'deep' }));
+    assert.equal(JSON.parse(calls[0].init.body).max_tokens, 32768);
+  });
+
+  it('档位改变 chat 请求体的预算', async () => {
+    const { fetch, calls } = fakeFetch(() => sseResponse([chatFrame({ content: 'hi' }), chatFinishFrame('stop')]));
+    const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
+    const prepared = await adapter.prepareCall(ROUTE_MAIN, 'fledge-alpha-free');
+    await collect(prepared.stream({ ...options, reasoningEffort: 'light' }));
+    await collect(prepared.stream({ ...options, reasoningEffort: 'deep' }));
+    assert.equal(JSON.parse(calls[0].init.body).max_tokens, 4096);
+    assert.equal(JSON.parse(calls[1].init.body).max_tokens, 131072);
+  });
+
+  it('responses 族把预算写在 max_output_tokens', async () => {
+    const { fetch, calls } = fakeFetch(() => sseResponse([
+      JSON.stringify({ type: 'response.output_text.delta', delta: 'hi' }),
+      JSON.stringify({ type: 'response.completed', response: { usage: { input_tokens: 1, output_tokens: 1 } } }),
+    ]));
+    const adapter = createAdapter({ state: mixedState, fetchImpl: fetch });
+    const prepared = await adapter.prepareCall(ROUTE_REGION, 'muse-spark-1.3-contributor-free');
+    await collect(prepared.stream({
+      ...options,
+      provider: ROUTE_REGION,
+      model: 'muse-spark-1.3-contributor-free',
+      reasoningEffort: 'light',
+    }));
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.max_output_tokens, 4096);
+    assert.equal('max_tokens' in body, false);
+    for (const field of EFFORT_FIELDS) assert.equal(field in body, false, `不应发送 ${field}`);
   });
 
   it('工具调用名回写成调用方拼写', async () => {

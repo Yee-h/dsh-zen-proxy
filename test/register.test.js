@@ -21,6 +21,36 @@ after(() => {
   for (const dir of tempDirs) rmSync(dir, { recursive: true, force: true });
 });
 
+/**
+ * 提取源码里所有模块说明符的正则集合。**两处用例共享这一份**：卫生用例用它扫 `src/`，
+ * 对抗用例用它验证每种引入形态都能被抓到。若各持一份副本，卫生用例退化时对抗用例仍会
+ * 拿自己的副本自证全绿（这正是它要消除的假绿）。
+ *
+ * 覆盖宿主包可能被引入的全部形态，缺一种就是一个盲区：
+ *   1. 静态 `import ... from 'x'` / `export ... from 'x'`（单双引号）
+ *   2. 裸副作用导入 `import 'x'`
+ *   3. 动态 `import('x')`（单双引号与模板字符串）
+ *   4. CJS `require('x')`
+ */
+const SPECIFIER_PATTERNS = Object.freeze([
+  /(?:^|[\s;{(])(?:import|export)[\s\S]*?from\s*['"]([^'"]+)['"]/gm,
+  /(?:^|[\s;{(])import\s*['"]([^'"]+)['"]/gm,
+  /import\s*\(\s*(?:['"]([^'"]+)['"]|`([^`$]+)`)\s*\)/gm,
+  /(?:^|[^\w$.])require\s*\(\s*['"]([^'"]+)['"]\s*\)/gm,
+]);
+
+/** 用共享正则集合抽取一段源码里的全部说明符（去重）。 */
+function specifiersIn(text) {
+  const found = new Set();
+  for (const pattern of SPECIFIER_PATTERNS) {
+    for (const match of text.matchAll(pattern)) {
+      const specifier = match[1] ?? match[2];
+      if (specifier !== undefined) found.add(specifier);
+    }
+  }
+  return found;
+}
+
 /** 一个够用的假 cordis 上下文。 */
 function fakeContext({ settingsId = 'zen-proxy' } = {}) {
   const disposers = [];
@@ -310,6 +340,54 @@ describe('源码卫生', () => {
       const text = readFileSync(file, 'utf8');
       const hits = [...text.matchAll(pattern)].map((match) => match[0]);
       assert.deepEqual(hits, [], `${file.pathname} 含有写死的绝对路径：${hits.join(', ')}`);
+    }
+  });
+
+  it('src/ 的模块只依赖 Node 内建与同目录模块', () => {
+    const root = new URL('../', import.meta.url);
+    // 正则集合与「对抗用例」共享（见文件顶部的 SPECIFIER_PATTERNS 注释）。
+    // 唯一允许的宿主包引用：register.js 用动态 import 尝试取宿主基类，失败即保持普通对象
+    // （见该文件 adoptHostBaseClass 的注释），因此按文件白名单放行。
+    const allowedHost = new Map([['register.js', '@deepseek-ai/dsh-llm']]);
+    let checked = 0;
+    for (const name of readdirSync(new URL('src/', root))) {
+      const file = new URL('src/' + name, root);
+      for (const specifier of specifiersIn(readFileSync(file, 'utf8'))) {
+        checked += 1;
+        if (specifier.startsWith('./') || specifier.startsWith('node:')) continue;
+        assert.equal(
+          allowedHost.get(name),
+          specifier,
+          file.pathname + ' 依赖了 ' + specifier + '；src/ 不允许依赖宿主包',
+        );
+      }
+    }
+    // 计数型检查必须能回答「检查了几个对象」：正则若失效，上面的断言会全部落空而仍然通过。
+    // 阈值 39 是本机实测的**去重后**说明符数（`_probe/count-imports.mjs`：旧单正则不去重为 40，
+    // 差额来自 probe.js 中同一说明符出现两次）。它只兜住「整体扫不到东西」这一类失效；
+    // 「漏抓某一种写法」由下面的对抗用例负责，两者分工不同。
+    assert.ok(checked > 0, '未匹配到任何 import，检查逻辑可能已失效');
+    assert.ok(checked >= 39, `受检 import 数异常偏少：${checked}`);
+  });
+
+  it('依赖检查的正则覆盖裸导入、模板字符串与 require', () => {
+    // 对抗用例：用**与卫生用例共享的同一份正则**验证每种引入形态都能被抓到。
+    // 共享是关键：若各持副本，卫生用例退化后本用例仍会全绿（N3 的假绿形态）。
+    const samples = [
+      ["import x from '@a/static'", '@a/static'],
+      ["import { a } from \"@a/double\"", '@a/double'],
+      ["export { a } from '@a/export'", '@a/export'],
+      ["import '@a/bare'", '@a/bare'],
+      ["void import('@a/dynamic')", '@a/dynamic'],
+      ['void import(`@a/template`)', '@a/template'],
+      ["const m = require('@a/require')", '@a/require'],
+    ];
+    for (const [code, expected] of samples) {
+      assert.equal(specifiersIn(code).has(expected), true, `未抓到 ${expected}（源码：${code}）`);
+    }
+    // 反向：确认这四种形态各自都被用到（删掉任一正则会让对应用例失败，从而暴露退化）。
+    for (const code of ["import '@a/bare'", 'void import(`@a/template`)', "require('@a/require')"]) {
+      assert.equal(specifiersIn(code).size, 1, `形态未被独立识别：${code}`);
     }
   });
 

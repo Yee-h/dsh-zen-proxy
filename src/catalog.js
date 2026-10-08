@@ -14,7 +14,8 @@
  *
  * - 免费判定 = id 以 `-free` 结尾（spec 的「目录只公布免费且可用的模型」定义）；
  * - 协议族判定 = 按 id 决定端点（design D11）；
- * - 上下文窗口 = 只在有可溯源来源时才给（见 {@link CONTEXT_WINDOW_SOURCE}）。
+ * - 上下文窗口 = 只在有可溯源来源时才给（见 {@link CONTEXT_WINDOW_SOURCE}）；
+ * - 输出上限 = 同上（见 {@link OUTPUT_LIMIT_SOURCE}）。
  *
  * 本模块是**宿主无关的纯逻辑**：不 import 任何 `@deepseek-ai/*` 包。
  *
@@ -72,6 +73,51 @@ export const CONTEXT_WINDOW_SOURCE = Object.freeze({
   'nemotron-3.5-lightning-free': 262144,
   'nemotron-3-ultra-free': 1000000,
   'space-bunny-free': 1048576,
+});
+
+/**
+ * 输出上限的**唯一**来源说明，与 {@link CONTEXT_WINDOW_SOURCE} 同源同日取值
+ * （同一次 `https://models.dev/api.json` 抓取的 `opencode` provider 的
+ * `limit.output`）。运行时**不**请求该地址。
+ *
+ * 来源 URL：https://models.dev/api.json（`opencode` provider 的 `limit.output`）
+ * 取值日期：2026-10-07
+ *
+ * 这一列是「深度」档预算的依据（见 `src/effort.js`）：档位是插件发明的，但容量
+ * 必须可溯源，不能按家族猜测。参考实现的取值与本表**不同**（它给 nemotron 32768、
+ * mimo 131072、space-bunny 65536），且没有记录来源，因此不予采信。
+ *
+ * 逐条溯源（模型 id → limit.output）：
+ *   exo-free 131072
+ *   fledge-alpha-free 131072
+ *   ling-3.0-flash-fin-free 32768
+ *   ling-3.1-flash-free 32768
+ *   longcat-2.5-preview-free 131072
+ *   mimo-v2.6-flash-free 32000
+ *   muse-spark-1.2-contributor-free 131072
+ *   muse-spark-1.3-contributor-free 131072
+ *   nemotron-3.5-lightning-free 262144
+ *   nemotron-3-ultra-free 128000
+ *   space-bunny-free 524288
+ *
+ * `jev-1.13-free` **不在**表中：上游在列，但 models.dev 的 opencode provider 里
+ * 没有它，因此没有可溯源容量，调用方须回退（见 `src/effort.js` 的
+ * `FALLBACK_OUTPUT_LIMIT`）。
+ *
+ * @type {Readonly<Record<string, number>>}
+ */
+export const OUTPUT_LIMIT_SOURCE = Object.freeze({
+  'exo-free': 131072,
+  'fledge-alpha-free': 131072,
+  'ling-3.0-flash-fin-free': 32768,
+  'ling-3.1-flash-free': 32768,
+  'longcat-2.5-preview-free': 131072,
+  'mimo-v2.6-flash-free': 32000,
+  'muse-spark-1.2-contributor-free': 131072,
+  'muse-spark-1.3-contributor-free': 131072,
+  'nemotron-3.5-lightning-free': 262144,
+  'nemotron-3-ultra-free': 128000,
+  'space-bunny-free': 524288,
 });
 
 /**
@@ -195,6 +241,17 @@ export function pathForModel(modelId) {
 export function contextWindowFor(modelId) {
   const base = baseModelId(modelId);
   const value = CONTEXT_WINDOW_SOURCE[base];
+  return Number.isSafeInteger(value) && value > 0 ? value : undefined;
+}
+
+/**
+ * 可溯源的输出上限；没有来源时返回 `undefined`（调用方须回退到默认容量）。
+ * @param {unknown} modelId
+ * @returns {number | undefined}
+ */
+export function outputLimitFor(modelId) {
+  const base = baseModelId(modelId);
+  const value = OUTPUT_LIMIT_SOURCE[base];
   return Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 

@@ -34,26 +34,38 @@ dsh 的模型选择器只从适配器的 `listModels` 取模型，而 `listModel
 
 ## 安装
 
-### 1. 把本包加进 desktop profile 的依赖
+### 1. 用桌面端的插件管理器安装（推荐）
 
-在 `$DSH_HOME/profiles/desktop/package.json` 的 `dependencies` 里加入本包（本地 checkout
-或 git 地址都可以）：
+在桌面端「设置 → 插件」里安装 `dsh-zen-proxy`（本地 checkout 或 git 地址都可以）。插件管理器会
+调用该 profile 自己的包管理器完成安装，并把包名**自动**追加进 `package.json` 的
+`dsh.profile.bundles`——这一步是必须的，否则包装上了但不会被当作 profile 层加载。
+
+### 2. 命令行安装（等价做法）
+
+```powershell
+dsh plugin --profile desktop add git+https://github.com/Yee-h/dsh-zen-proxy.git
+# 或在本地 checkout 时：dsh plugin --profile desktop add file:C:/path/to/dsh-zen-proxy
+```
+
+`dsh plugin` 只把参数**透传**给 profile 的包管理器（本机为 pnpm），因此它**不会**替你写
+`dsh.profile.bundles`——装完还要手工在 `$DSH_HOME/profiles/desktop/package.json` 里补上：
 
 ```jsonc
 {
-  "dependencies": {
-    "dsh-zen-proxy": "git+https://github.com/Yee-h/dsh-zen-proxy.git"
-    // 或在本地 checkout 时： "dsh-zen-proxy": "file:C:/path/to/dsh-zen-proxy"
+  "dsh": {
+    "profile": {
+      "bundles": [
+        // …已有的 bundle…
+        "dsh-zen-proxy"
+      ]
+    }
   }
 }
 ```
 
-### 2. 安装
-
-```powershell
-cd $env:DSH_HOME\profiles\desktop
-npm install
-```
+> profile 由 **pnpm** 管理（有 `pnpm-lock.yaml`、`.modules.yaml`），不是 npm 工程。
+> 请用 `dsh plugin` 或 `pnpm install`；`npm install` 不会更新 `pnpm-lock.yaml`，
+> 会留下与 `.modules.yaml` 不一致的 `node_modules`。
 
 `@deepseek-ai/*`（cordis、dsh-llm、schemastery）由宿主在运行时注入，**不**会（也不应）出现在
 profile 的 `node_modules` 里，因此它们只作为本包的 `peerDependencies` 声明。
@@ -138,6 +150,36 @@ HTTP 状态码 403，无论走 `/chat/completions` 还是 `/responses`、无论�
 
 ---
 
+## 思考强度
+
+模型选择器里的「思考强度」下拉是**插件提供的**，上游没有这个概念。本车道的网关接受
+`reasoning_effort`、`thinking.budget_tokens`、`enable_thinking`、`thinking_budget` 之后
+**全部忽略**（`low` 产生的思考 token 反而比 `high` 多，未知字段还会偶尔 503；四种拼写的对照
+取自参考实现的实测，本机复测的是 `reasoning_effort`，见 `evidence.md` (1)），唯一被执行的强度旋钮是**输出预算上限**。因此宿主需要的 `reasoning.efforts` 菜单由
+插件给出，每一档都折算成请求体的 `max_tokens`（chat 族）或 `max_output_tokens`（responses 族）。
+
+| 档位 | 基准输出上限 | 实际发出 | 含义 |
+|---|---|---|---|
+| `light` · 精简 | 2048 | 2048 × 2 = **4096** | 最短思考，最快给出答案 |
+| `balanced` · 均衡（默认） | 8192 | 8192 × 2 = **16384** | 思考与正文各占一半 |
+| `deep` · 深度 | 模型容量 | 该模型的输出容量 | 尽量思考，正文可能先被截断 |
+
+- **为什么乘 2**：输出上限同时限制思考与正文，倍率 2 对应「思考占比不超过 50%」这一边界
+  （正文 = 2 × 基准 × (1 − 占比)，故占比 ≤ 50% 时档位名里的数字仍是正文的下界）。
+  本机复核 `mimo-v2.6-flash-free` 的占比为 33%-43%（`evidence.md` (1)），落在边界内：
+  `light` 档实测正文 3117 token（预算 4096、思考 979）。参考实现曾在同一模型上测得约 82%
+  （92 次调用，见 `evidence.md` (2b)），该占比与 2 倍系数**不相容**，本机未复现，故未按它标定。
+- **容量取自哪里**：`models.dev` 的 `limit.output`，逐条溯源与取值日期写在 `src/catalog.js`
+  的 `OUTPUT_LIMIT_SOURCE` 注释里。没有溯源的模型（`jev-1.13-free`）回退到 32768。
+- **档位名称里的数字是发出预算的千位表示**：菜单上的 `精简 · 4 K` 与请求体里的 `4096`
+  由同一次折算得出，不存在两套算法（回归测试锁死这一点）。容量不是 1024 的整数倍时按
+  四舍五入显示，例如 `mimo-v2.6-flash-free` 的容量 32000 显示为 `深度 · 31 K`。
+- **调用方上限只收窄不抬高**：宿主或调用方显式指定输出上限时，实际发出的是它与档位预算
+  中的**较小者**——档位不会突破调用方上限，调用方上限也不会把档位抬高。预算恒为整数且
+  不小于 512——非正数、`NaN`、`Infinity` 一律视为「没有该上限」，不会把回复压没。
+
+---
+
 ## 上游协议
 
 - 清单：`GET https://opencode.ai/zen/v1/models`（唯一允许写死的网络地址就是上游 base URL）。
@@ -206,11 +248,19 @@ user-agent: deepseek-harness/<version> (+https://github.com/deepseek-ai/deepseek
    池化，用满后会返回 `429 FreeUsageLimitError`（映射为 `RATE_LIMIT`），退避或等窗口恢复。
 4. **首版不支持图片输入**。目录里每个模型都声明 `inputModalities: ['text']`，宿主会把图片
    投影成文本占位符，适配器永远不需要处理图片块。
-5. **能力元数据只有上下文窗口，且只有部分模型有**。上游清单不提供任何能力字段，
-   `contextWindow` 只在有可溯源来源时给出（来源与取值日期见
-   `openspec/changes/archive/2026-10-07-add-opencode-free-provider/evidence.md`），无来源的模型省略该字段但
-   **仍会出现在目录中**。刻意不声明 `defaultMaxTokens`：调用方未指定输出上限时，适配器不发
-   `max_tokens` / `max_output_tokens`（实测上游接受不带上限的请求）。
+5. **能力元数据只有上下文窗口与输出上限，且只有部分模型有**。上游清单不提供任何能力字段，
+   `contextWindow` 与输出容量只在有可溯源来源时给出（来源与取值日期见
+   `openspec/changes/archive/2026-10-07-add-opencode-free-provider/evidence.md`），无来源的模型省略
+   `context` 但**仍会出现在目录中**；`jev-1.13-free` 既无窗口也无输出上限溯源，它的「深度」档
+   因此回退到 32768。刻意不声明 `defaultMaxTokens`：它与档位无关，无法表达思考强度差异，
+   请求体的输出预算改由档位折算给出（见「思考强度」）。
+6. **档位 id 不跨 provider 通用，本车道不做别名**。本车道的档位是 `light` / `balanced` / `deep`；
+   若把别的 provider 的档位（例如 `high`、`medium`）带给本车道的模型，宿主会在调用适配器**之前**
+   抛 `UNSUPPORTED_REASONING_EFFORT`——这是宿主既定行为（不 clamp、不 alias），本插件也不做映射，
+   因为档位语义在本车道是「输出预算」，与别的 provider 的强度档没有可溯源的换算关系。
+   实务影响：把 profile 的默认模型切到本车道时，若 `agent-default-model` 里还留着别的 provider 的
+   `reasoningEffort`，该轮请求会被拒；把该字段改成三个档位之一或删掉即可（删掉则用默认档
+   `balanced`）。
 
 ---
 
@@ -229,6 +279,7 @@ npm test             # node:test，覆盖全部纯逻辑模块与适配器行为
 | `src/identity.js` | 身份头与版本门槛、会话/请求 id 派生（**含上面那处偏离的注释**） |
 | `src/http.js` | 上游请求封装、SSE 解码、错误分类接线 |
 | `src/catalog.js` | 清单解析、免费过滤、协议族判定、可溯源能力元数据 |
+| `src/effort.js` | 思考档位阶梯与「档位 → 输出预算」折算（宿主无关纯逻辑） |
 | `src/probe.js` | 单模型探测与判定 |
 | `src/state.js` | 判定状态机与持久化 |
 | `src/schedule.js` | 周期调度与退避 |

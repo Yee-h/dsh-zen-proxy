@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 import {
   CATALOG_METADATA_UNKNOWN,
   CONTEXT_WINDOW_SOURCE,
+  OUTPUT_LIMIT_SOURCE,
   CHAT_COMPLETIONS_PATH,
   RESPONSES_PATH,
   UPSTREAM_BASE_URL,
@@ -16,6 +17,7 @@ import {
   hasTraceableCapabilities,
   isFreeModel,
   isResponsesModel,
+  outputLimitFor,
   parseListing,
   pathForModel,
   pathForWire,
@@ -93,12 +95,37 @@ describe('可溯源能力元数据', () => {
     for (const [id, value] of Object.entries(CONTEXT_WINDOW_SOURCE)) {
       assert.ok(Number.isSafeInteger(value) && value > 0, `${id} 的窗口值必须为正整数`);
     }
+    // 计数型断言：空表/键名改坏时上面的循环会「零次通过」，因此必须锁定受检条数。
+    assert.equal(Object.keys(CONTEXT_WINDOW_SOURCE).length, 11, '受检窗口条目数');
   });
 
   it('没有来源的模型返回 undefined（调用方须省略 context）', () => {
     assert.equal(contextWindowFor('jev-1.13-free'), undefined);
     assert.equal(contextWindowFor('some-future-model-free'), undefined);
     assert.equal(hasTraceableCapabilities('jev-1.13-free'), false);
+  });
+
+  it('有输出上限来源的模型给出正的上限值', () => {
+    assert.equal(outputLimitFor('mimo-v2.6-flash-free'), 32000);
+    assert.equal(outputLimitFor('space-bunny-free'), 524288);
+    assert.equal(outputLimitFor('nemotron-3.5-lightning-free'), 262144);
+    for (const [id, value] of Object.entries(OUTPUT_LIMIT_SOURCE)) {
+      assert.ok(Number.isSafeInteger(value) && value > 0, id + ' 的输出上限必须为正整数');
+    }
+    // 计数型断言 + 与窗口表同键：两表取自同一次 models.dev 抓取、覆盖同一批 11 个免费 id，
+    // 因此键集合必须相同（jev-1.13-free 双双缺席）。空表或键名漂移都会在此失败。
+    assert.equal(Object.keys(OUTPUT_LIMIT_SOURCE).length, 11, '受检输出上限条目数');
+    assert.deepEqual(
+      Object.keys(OUTPUT_LIMIT_SOURCE).sort(),
+      Object.keys(CONTEXT_WINDOW_SOURCE).sort(),
+      '两张溯源表必须覆盖同一批模型 id',
+    );
+  });
+
+  it('没有输出上限来源的模型返回 undefined', () => {
+    assert.equal(outputLimitFor('jev-1.13-free'), undefined);
+    assert.equal(outputLimitFor('some-future-model-free'), undefined);
+    assert.equal(Object.hasOwn(OUTPUT_LIMIT_SOURCE, 'jev-1.13-free'), false);
   });
 
   it('诊断码是稳定字符串', () => {

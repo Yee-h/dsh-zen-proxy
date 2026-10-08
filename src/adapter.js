@@ -19,11 +19,13 @@
 
 import { ABORTED_CODE } from './chunks.js';
 import {
+  outputLimitFor,
   contextWindowFor,
   displayNameFor,
   pathForModel,
   wireFor,
 } from './catalog.js';
+import { DEFAULT_EFFORT, budgetFor, effortsFor } from './effort.js';
 import { requestUpstream } from './http.js';
 import { buildIdentityHeaders, requestForTurn, resolveClientVersion, sessionForConversation } from './identity.js';
 import { buildRequestFor } from './messages.js';
@@ -55,6 +57,19 @@ export const ROUTE_VERDICTS = Object.freeze({
 
 /** 目录里每个模型都声明纯文本输入：宿主据此把图片块投影成占位符，适配器无需处理图片。 */
 const INPUT_MODALITIES = Object.freeze(['text']);
+
+/**
+ * 某模型的思考强度菜单。
+ *
+ * 宿主只在精确模型信息里看到 `reasoning.efforts` 才会渲染档位（否则用户只能选模型、
+ * 无法调节强度），因此每个已公布模型都要给菜单。容量取可溯源的输出上限，档位名称里的
+ * 数字与 `streamTurn` 将要发出的预算由同一次折算得出。
+ * @param {string} modelId
+ * @returns {{efforts: object[], defaultEffort: string}}
+ */
+function reasoningFor(modelId) {
+  return { efforts: effortsFor({ outputLimit: outputLimitFor(modelId) }), defaultEffort: DEFAULT_EFFORT };
+}
 
 /**
  * 派生出一次对话的会话身份。
@@ -92,8 +107,9 @@ export function createAdapter({ state, clientVersion, fetchImpl, timeoutMs }) {
       inputModalities: [...INPUT_MODALITIES],
       // 只在有可溯源来源时给出上下文窗口；无来源就省略（见 src/catalog.js）。
       ...contextWindow === undefined ? {} : { context: { contextWindow } },
-      // 不声明 defaultMaxTokens：宿主会把它物化成请求的输出上限，而 spec 要求
-      // 适配器不在调用方未指定输出上限时自行发送 max_tokens / max_output_tokens。
+      // 不声明 defaultMaxTokens：宿主会把它物化成请求的输出上限，而它与档位无关，
+      // 无法表达思考强度差异（见 design 的 D20）。
+      reasoning: reasoningFor(modelId),
     };
   }
 
@@ -147,6 +163,7 @@ export function createAdapter({ state, clientVersion, fetchImpl, timeoutMs }) {
         name: entry.name,
         inputModalities: entry.inputModalities,
         ...entry.context === undefined ? {} : { context: entry.context },
+        reasoning: entry.reasoning,
       };
     },
 
@@ -197,8 +214,9 @@ async function* streamTurn(options, { version, fetchImpl, timeoutMs }) {
     messages: options?.messages,
     tools,
     toolChoice,
-    // 调用方（或宿主按适配器声明）给了输出上限才发送；本适配器不声明默认上限。
-    maxTokens: options?.maxTokens,
+    // 本车道唯一被执行的强度旋钮：把宿主解析出的档位折算成输出上限。
+    // 调用方给了上限时以它为容量上限，档位不突破它。
+    maxTokens: budgetFor(options?.reasoningEffort, { outputLimit: outputLimitFor(modelId) }, options?.maxTokens),
     temperature: options?.temperature,
     stop: options?.stop,
   });

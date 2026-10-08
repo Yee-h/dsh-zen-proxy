@@ -12,8 +12,9 @@
  * - responses：`POST /zen/v1/responses`，`input` 扁平 item 列表 + 扁平 `tools[{type:'function',name,…}]`
  *
  * 两者都强制 `stream: true`（spec 的「闸门要求的请求形状」）。
- * **不自行发送输出上限**：只有调用方（或宿主按适配器声明的默认值）给出正整数
- * `maxTokens` 时才写入 `max_tokens` / `max_output_tokens`。
+ * **本模块不发明输出上限**：只把调用方给出的正整数 `maxTokens` 写成 `max_tokens` /
+ * `max_output_tokens`；具体取值由 `src/effort.js` 的 `budgetFor` 按思考档位折算，本模块
+ * 不做档位推断（本变更后适配器总是传入一个不小于下界的正整数，因此线上恒带预算）。
  *
  * 本模块是**宿主无关的纯逻辑**：不 import 任何 `@deepseek-ai/*` 包。
  *
